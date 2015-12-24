@@ -1,0 +1,92 @@
+---
+title: "PML_Project"
+author: "Daniel Jaeger"
+date: "23 December 2015"
+output: html_document
+---
+
+Using various activity data cited in the report, we will build a model that predicts which exercise a subject is performing.  The data we are using contains information on movements recored by various wearable measurement instruments such as armbands, gloves, belts, and dumbell sensors.  The goal is to predict which exercise is being performed based on the data.  Specifically from the data summary, "Six young health participants were asked to perform one set of 10 repetitions of the Unilateral Dumbbell Biceps Curl in five different fashions: exactly according to the specification (Class A), throwing the elbows to the front (Class B), lifting the dumbbell only halfway (Class C), lowering the dumbbell only halfway (Class D) and throwing the hips to the front (Class E)."
+
+
+First, we load the data and initialize the caret package in R:
+```{r}
+install.packages("caret")
+library(caret)
+train_orig <- read.csv('pml-training.csv')
+test_orig <- read.csv('pml-testing.csv')
+```
+
+Now, we proceed to clean the data
+```{r}
+## grab numeric data
+train_v1 <- train_orig[,8:159]
+test_v1 <- test_orig[,8:159]
+
+## make all values numeric
+train_v1 <- data.frame(sapply(train_v1, as.numeric))
+test_v1 <- data.frame(sapply(test_v1, as.numeric))
+
+## modify NA's so they are zero
+train_v1[is.na(train_v1)] <- 0
+test_v1[is.na(test_v1)] <- 0
+```
+
+The caret package contains some useful tools to filter out irrelevant data.  Specifically, we use nearZeroVar and findCorrelation.  nearZeroVar filters out fields that have few unique values or a low variance.  findCorrelation searches through a correlation matrix and returns a vector of integers corresponding to columns to remove to reduce pair-wise correlations.
+```{r}
+## get rid of variables at near zero variance
+nearZero <- nearZeroVar(train_v1)
+train_v1 <- train_v1[,-nearZero]
+test_v1 <- test_v1[,-nearZero]
+
+##adjust for correlation
+cor <- findCorrelation(cor(train_v1))
+train_v1 <- train_v1[,-cor]
+test_v1 <- test_v1[,-cor]
+```
+
+Next we include the user variable, which is non-numeric.  This may have some predictive value.  We also bring in the classe variable, which we are trying to predict.
+```{r}
+## include user variable
+user_train <- as.factor(train_orig$user_name)
+user_test <- as.factor(test_orig$user_name)
+
+## include classe variable
+classe_train <- as.factor(train_orig[,160])
+
+## apply cbind
+train_v1 <- cbind(train_v1, user_train, classe_train)
+test_v1 <- cbind(test_v1, user_test)
+colnames(test_v1) [46] <- "user_train"
+```
+
+Now we partition our larger dataset into a train and test.  We will use a 75/25 split.
+```{r}
+## create data partition for testing
+set.seed(100)
+trainrows <- createDataPartition(y=classe_train, p=.75, list=FALSE)
+train_v2 <- train_v1[trainrows,]
+test_v2 <- train_v1[-trainrows,]
+```
+
+Now we are ready to fit the model.  After several attempts we have found that the random forest produces a very good fit.  We will use repeated cross validation with 2 repeats to improve the fit.  We will keep the number of repeats low to improve the processing speed.  As shown below, the results produce a very good fit.
+```{r}
+## fit model and view results
+control <- trainControl(method = "repeatedcv", repeats = 2)
+modfit <- train(classe_train ~ ., data = train_v2, method = "rf", tuneLength=1)
+modfit
+```
+
+We will now test our model on the larger testing set and produce our output of 20 predictors as requested by this assignment.
+```{r}
+## test model
+pred <- predict(modfit, test_v2)
+confusionMatrix(test_v2$classe_train, pred)
+plot(varImp(modfit))
+pred_test <- predict(modfit, test_v1)
+pred_test
+```
+We see from the variable importance chart that certain variable were more useful than others in predicting.  Some further cleaning of the dataset could reduct processing time.  Interestingly, the user was not very useful at all.
+
+The data used in the exercise is from the following source:
+Velloso, E.; Bulling, A.; Gellersen, H.; Ugulino, W.; Fuks, H. Qualitative Activity Recognition of Weight Lifting Exercises. Proceedings of 4th International Conference in Cooperation with SIGCHI (Augmented Human '13) . Stuttgart, Germany: ACM SIGCHI, 2013.
+Read more: http://groupware.les.inf.puc-rio.br/har#ixzz3vCLYcven
